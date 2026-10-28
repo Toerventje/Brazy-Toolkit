@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('rsDesktop', {
   openExportDir: () => ipcRenderer.invoke('rs:openDir'),
   gpuInfo: () => ipcRenderer.invoke('rs:gpu'),
   onSaved: (cb) => ipcRenderer.on('rs:saved', (_e, info) => cb(info)),
+  // 8.4: the app on screen (its export subfolder), export options {sub, keep}, show a saved file in Explorer
+  setApp: (name) => ipcRenderer.invoke('rs:setApp', name),
+  exportOpts: (o) => ipcRenderer.invoke('rs:exportOpts', o || null),
+  showSaved: (p) => ipcRenderer.invoke('rs:openSaved', p),
   // updates
   pickUpdate: () => ipcRenderer.invoke('rs:pickUpdate'),
   checkOnline: () => ipcRenderer.invoke('rs:checkOnline'),

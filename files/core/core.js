@@ -90,6 +90,16 @@ function createWindow() {
   loadToolkit();
 }
 
+/* ---------------- 8.4: where an export goes ----------------
+   export folder [+ a subfolder for the app on screen (Clothing, Logos, Videos…)]; an existing file is replaced, or kept with " (2)" added */
+let curApp = '';
+function exportPath(name) {
+  let dir = S.cfg.exportDir;
+  if (S.cfg.exportSub && curApp) { dir = path.join(dir, curApp); try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = S.cfg.exportDir; } }
+  let p = path.join(dir, name);
+  if (S.cfg.exportKeep && fs.existsSync(p)) { const ext = path.extname(name), base = name.slice(0, name.length - ext.length); for (let i = 2; i < 1000 && fs.existsSync(p); i++) p = path.join(dir, `${base} (${i})${ext}`); }
+  return p;
+}
 /* ---------------- what the toolkit page may ask (preload.js) ---------------- */
 function ipc() {
   const h = (ch, fn) => ipcMain.handle(ch, fn);
@@ -100,6 +110,9 @@ function ipc() {
   h('rs:chooseDir', async () => { const d = await pickDir('Exportmap / Export folder', S.cfg.exportDir); if (d) { S.cfg.exportDir = d; S.save(); } return S.cfg.exportDir || ''; });
   h('rs:clearDir', () => { delete S.cfg.exportDir; S.save(); return ''; });
   h('rs:openDir', () => { const d = S.cfg.exportDir || S.cfg.lastSaveDir; if (d) shell.openPath(d); return !!d; });
+  h('rs:setApp', (_e, name) => { curApp = path.join(...String(name || '').split('/').slice(0, 2).map(x => x.replace(/[\\:*?"<>|.]+/g, '').trim().slice(0, 40)).filter(Boolean).concat([''])); return true; });
+  h('rs:exportOpts', (_e, o) => { if (o && typeof o === 'object') { if ('sub' in o) S.cfg.exportSub = !!o.sub; if ('keep' in o) S.cfg.exportKeep = !!o.keep; S.save(); } return { dir: S.cfg.exportDir || '', sub: !!S.cfg.exportSub, keep: !!S.cfg.exportKeep }; });
+  h('rs:openSaved', (_e, p) => { if (typeof p === 'string' && fs.existsSync(p)) shell.showItemInFolder(p); return true; });
   h('rs:gpu', async () => { try { const g = await app.getGPUInfo('basic'); const d = (g.gpuDevice || []).find(x => x.active) || (g.gpuDevice || [])[0]; return d ? (d.deviceString || d.vendorString || '') : ''; } catch { return ''; } });
   // updates
   h('rs:pickUpdate', async () => {
@@ -146,7 +159,7 @@ app.whenReady().then(() => {
   // exports: straight into the chosen export folder (no prompt), otherwise a normal "Save as" dialog
   session.defaultSession.on('will-download', (_e, item) => {
     const name = item.getFilename();
-    if (S.cfg.exportDir && fs.existsSync(S.cfg.exportDir)) item.setSavePath(path.join(S.cfg.exportDir, name));
+    if (S.cfg.exportDir && fs.existsSync(S.cfg.exportDir)) item.setSavePath(exportPath(name));
     else item.setSaveDialogOptions({ title: 'Opslaan / Save', defaultPath: path.join(S.cfg.lastSaveDir || app.getPath('downloads'), name) });
     item.once('done', (_ev, state) => {
       if (state !== 'completed') return;
