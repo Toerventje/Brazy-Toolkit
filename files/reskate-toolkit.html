@@ -383,6 +383,8 @@ kbd{font-family:var(--mono)}
       <div class="ssep"></div>
       <div class="srow"><span id="lblPerf">Prestaties</span><div class="tog" id="perfTog"><button data-p="auto">Auto</button><button data-p="quality" id="perfQ">Kwaliteit</button><button data-p="fast" id="perfF">Snel</button></div></div>
       <div class="snote" id="notePerf"></div>
+      <div class="srow"><span id="lblIdle">Ongebruikte apps sluiten</span><div class="tog" id="idleTog"><button data-i="1" id="idleOn">Aan</button><button data-i="0" id="idleOff">Uit</button></div></div>
+      <div class="snote" id="noteIdle"></div>
       <div class="srow"><span></span><button class="sbtn" id="perfRepBtn">Prestatierapport</button></div>
       <div class="ssep"></div>
       <div class="srow"><span id="lblNav">Zijbalk</span><div class="tog" id="navTog"><button data-n="0" class="on" id="navFull">Breed</button><button data-n="1" id="navMini">Smal</button></div></div>
@@ -407,8 +409,10 @@ const MODEL_LIB = [{"id": "own_bottompants_gen_jeansbaggy_00001", "module": "pan
 /* =====================================================================================
    Version & changelog
    ===================================================================================== */
-const VERSION = '8.0.0';
+const VERSION = '8.1.0';
 const CHANGELOG = [
+  { v: '8.1.0', nl: ["Geheugen vrijmaken: een app die je een tijd niet gebruikt, wordt na het bewaren gesloten als het geheugen krap wordt (of na 45 minuten). Open je hem weer, dan staat alles waar je was — de Clothing Manager laadt ook het model terug. Aan/uit in Instellingen.", "Logo Maker start ~35 % sneller: lettertypen worden pas geladen als een tekst ze gebruikt (de rest daarna op de achtergrond). Logo Maker en Video Editor delen nu één lettertype- en iconenlader."],
+    en: ["Free memory: an app you have not used for a while is saved and closed when memory gets tight (or after 45 minutes). Open it again and everything is where you left it — the Clothing Manager reloads its model too. On/off in Settings.", "Logo Maker starts ~35% faster: fonts are loaded only when a text uses them (the rest later in the background). The Logo Maker and Video Editor now share one font and icon loader."] },
   { v: '8.0.0', nl: ["Automatische updates: de app kijkt bij het starten en elk uur, downloadt een nieuwe versie stil op de achtergrond (alleen wat veranderd is) en vraagt dan of je ze nu wilt installeren — je werk wordt eerst bewaard.", "De app zelf wordt nu ook bijgewerkt (niet alleen de toolkit): na deze installatie heb je nooit meer een installer nodig. Gaat een bijgewerkte app ooit niet goed op, dan start automatisch de vorige.", "Modellen en base maps zijn echte binaire bestanden: ~25 % kleiner (126 → 95 MB) en sneller te openen.", "Elke app is een eigen bestand in de app: updates downloaden alleen de app die veranderd is; de losse app-bestanden in je projectmap zijn weg.", "Eénmalig: installeer Brazy Toolkit Setup 8.0.0 (oudere versies kunnen deze update niet zelf installeren)."],
     en: ["Automatic updates: the app checks at start and every hour, quietly downloads a new version in the background (only what changed) and then asks whether to install it now — your work is saved first.", "The app itself now updates too (not only the toolkit): after this install you never need an installer again. If an updated app ever fails to start, the previous one starts automatically.", "Models and base maps are real binary files: ~25% smaller (126 → 95 MB) and faster to open.", "Every app is its own file inside the app: updates only download the app that changed; the loose app files in your project folder are gone.", "One time only: install Brazy Toolkit Setup 8.0.0 (older versions cannot install this update themselves)."] },
   { v: '7.5.1', nl: ["Kleiner en sneller: de toolkit-pagina is 60 % kleiner (2,4 MB → 0,97 MB) — elke app zit er gecomprimeerd in en wordt pas uitgepakt als je hem opent; de hub start ongeveer een derde sneller.", "Alle apps zijn ~20 % kleiner (geminimaliseerde code); Logo Maker start sneller (lettertypen worden sneller ingeladen).", "Video Editor: bewerken in grote projecten is tot 4× vlotter (de tijdlijn hergebruikt ongewijzigde clips en tekent zonder steeds alles opnieuw op te meten); ongedaan maken gebruikt bij grote projecten niet meer onbeperkt geheugen.", "Clothing Manager: shaders worden pas gebouwd als ze nodig zijn (de rest op de achtergrond), en de grip-uitsnede wordt alleen voor skateboards aangemaakt (sneller openen, ~5 MB minder geheugen)."],
@@ -746,6 +750,9 @@ const ST = {
   help: lsGet('rtk.help4') === '1', mini: lsGet('rtk.navmini') === '1', active: 'home', frames: {}, ready: {}, model: {}, pending: {}, sent: {}, q: {}, closed: {},
   shut: (() => { try { return JSON.parse(lsGet('rtk.shut') || '{}') || {}; } catch { return {}; } })(),
 };
+/* 8.1: when each app was last used + apps closed to free memory (see idleSweep) */
+const IDLE = { used: {}, asking: {}, HIDDEN: 10 * 60e3, LONG: 45 * 60e3, EVERY: 2 * 60e3 }, UNLOADQ = {};
+ST.unloaded = {};
 const LIB = typeof MODEL_LIB !== 'undefined' ? MODEL_LIB : [];
 /* v5: the separate "Pattern generator" section is part of Clothing now -> move its saved state */
 for (const k of ['rtk.last', 'rtk.lastWork']) if (lsGet(k) === 'patterns') lsSet(k, 'pants');
@@ -766,7 +773,10 @@ function openModule(m) {
     $('#main').append(f, ld);
     f.addEventListener('load', () => { ld.remove(); syncFrame(m, f); });
     f.src = appURL(m.src);
-    ST.frames[m.id] = f;
+    ST.frames[m.id] = f; IDLE.used[m.id] = Date.now();
+    const u = ST.unloaded[m.id];   // 8.1: closed earlier to free memory -> it comes back where you left it
+    if (u) { delete ST.unloaded[m.id]; const md = u.model && LIB.find(x => x.id === u.model); if (md && !ST.pending[m.id]) { ST.pending[m.id] = md; ST.model[m.id] = md.id; }
+      if (u.rec) ST.recentQ[m.id] = { rs: 'openRecent', id: u.rec, expectModel: !!md }; }
   }
   return f;
 }
@@ -798,6 +808,7 @@ function fetchBase(id) {
 }
 window.addEventListener('message', e => {
   const d = e.data || {};
+  if (d.rs === 'unloadOK' && UNLOADQ[d.qid]) { UNLOADQ[d.qid](d); delete UNLOADQ[d.qid]; return; }
   if (d.rs === 'busy') { const k = String(d.what || 'work'); if (d.on) ST.busy.add(k); else ST.busy.delete(k); if (DESK && DESK.keepAwake) DESK.keepAwake(ST.busy.size > 0); return; }   // e.g. a long export: the PC must not go to sleep
   if (d.rs === 'perfData' && PERFREQ[d.id]) { PERFREQ[d.id](d.data); return; }
   if (d.rs === 'needBase' && typeof d.id === 'string' && /^[a-z0-9_]+$/.test(d.id)) {
@@ -855,6 +866,7 @@ function show(id) {
   if (id === 'patterns') { openPatternStudio(); return; }   // the old Pattern generator section: now part of Clothing
   { const mm = MODULES.find(x => x.id === id); if (mm && ST.catShut && ST.catShut[mm.cat]) { ST.catShut[mm.cat] = false; lsSet('rtk.catshut', JSON.stringify(ST.catShut)); } }
   { const pf = ST.frames[ST.active]; if (pf && ST.active !== id && ST.ready[ST.active]) pf.contentWindow.postMessage({ rs: 'saveRecent' }, '*'); }
+  IDLE.used[ST.active] = IDLE.used[id] = Date.now();   // 8.1: when each app was last in use
   ST.active = id; lsSet('rtk.last', id); if (id !== 'home' && id !== 'clothing') lsSet('rtk.lastWork', id);
   const m = MODULES.find(x => x.id === id), app = appOf(id);
   document.body.classList.toggle('solo', !app || !!app.module); document.body.dataset.app = app ? app.id : 'hub';
@@ -1091,11 +1103,15 @@ function gpuName(h) { if (h.soft) return nlTxt('software-weergave (geen grafisch
 const nlTxt = (a, b) => ST.lang === 'nl' ? a : b;
 const perfLow = () => ST.perf === 'fast' || (ST.perf === 'auto' && ST.hw.tier === 'low');
 function perfMsg() { return { rs: 'perf', mode: ST.perf, tier: ST.perf === 'quality' ? 'high' : ST.perf === 'fast' ? 'low' : ST.hw.tier, low: perfLow(), hw: ST.hw }; }
+$('#idleTog').addEventListener('click', e => { const b = e.target.closest('[data-i]'); if (!b) return; lsSet('rtk.idleClose', b.dataset.i); renderPerf(); });
 function setPerf(m) { ST.perf = m; lsSet('rtk.perf', m); for (const f of Object.values(ST.frames)) if (f.contentWindow) f.contentWindow.postMessage(perfMsg(), '*'); renderPerf(); }
 function renderPerf() {
   const nl = ST.lang === 'nl', h = ST.hw, tn = { low: nl ? 'licht' : 'light', mid: nl ? 'gemiddeld' : 'medium', high: nl ? 'krachtig' : 'powerful' }[h.tier], gpu = gpuName(h);
   $$('#perfTog button').forEach(b => b.classList.toggle('on', b.dataset.p === ST.perf));
   $('#perfRepBtn').textContent = nl ? 'Prestatierapport' : 'Performance report'; $('#perfRepBtn').title = nl ? 'Cijfers over deze pc en de apps om traagheid op te sporen' : 'Numbers about this PC and the apps to track down slowness';
+  { const on = lsGet('rtk.idleClose') !== '0'; $$('#idleTog button').forEach(b => b.classList.toggle('on', (b.dataset.i === '1') === on));
+    $('#lblIdle').textContent = nl ? 'Ongebruikte apps sluiten' : 'Close unused apps'; $('#idleOn').textContent = nl ? 'Aan' : 'On'; $('#idleOff').textContent = nl ? 'Uit' : 'Off';
+    $('#noteIdle').textContent = nl ? 'Een app die je een tijd niet gebruikt, wordt na het bewaren gesloten als het geheugen krap wordt (of na 45 min). Je opent hem weer waar je was; alleen ongedaan maken begint opnieuw.' : 'An app you have not used for a while is saved and closed when memory gets tight (or after 45 min). It opens again where you were; only its undo history starts fresh.'; }
   $('#lblPerf').textContent = nl ? 'Prestaties' : 'Performance'; $('#perfQ').textContent = nl ? 'Kwaliteit' : 'Quality'; $('#perfF').textContent = nl ? 'Snel' : 'Fast';
   $('#notePerf').textContent = (nl ? `Deze pc: ${tn} — ${h.cores} kernen${h.mem ? ', ' + h.mem + '+ GB' : ''}, ${gpu}. ` : `This PC: ${tn} — ${h.cores} cores${h.mem ? ', ' + h.mem + '+ GB' : ''}, ${gpu}. `)
     + (perfLow() ? (nl ? 'Snel: lagere resolutie in 3D en voorbeelden; apps op de achtergrond rusten.' : 'Fast: lower resolution in 3D and previews; background apps rest.') : (nl ? 'Apps op de achtergrond rusten altijd; de Video Editor past de voorbeeldkwaliteit zelf aan.' : 'Background apps always rest; the Video Editor adapts its preview quality by itself.'));
@@ -1306,6 +1322,31 @@ applyLang();
 /* v6: start on the hub; the app cards continue where you were (remember the last clothing tool before the hub overwrites rtk.last) */
 { const pl = lsGet('rtk.last'); if (MODULES.some(m => m.id === pl && m.app === 'clothing') && !lsGet('rtk.app.clothing')) lsSet('rtk.app.clothing', pl); }
 show('home');
+/* ================= 8.1: apps you have not used for a while are closed to free memory =================
+   Every 2 minutes: an app hidden for 10+ minutes is closed when the toolkit uses a lot of memory (or after 45 minutes
+   hidden), but only if it confirms it saved everything it needs (rs:'canUnload' -> each app's RTK.canUnload). Opening
+   it again restores the project (the Clothing Manager also gets its model back). Off: localStorage rtk.idleClose = '0'. */
+async function idleSweep(force) {
+  if (lsGet('rtk.idleClose') === '0' || ST.busy.size) return [];
+  const now = Date.now(), cand = Object.keys(ST.frames).filter(id => id !== ST.active && ST.ready[id] && !IDLE.asking[id] && (force || now - (IDLE.used[id] || now) > IDLE.HIDDEN));
+  if (!cand.length) return [];
+  let pressure = !!force;
+  if (!pressure && DESK && DESK.metrics) { try { const m = await DESK.metrics(), tot = m.mem.reduce((a, x) => a + x.mb, 0); pressure = tot > Math.min(3000, (ST.hw.mem || 8) * 1024 * 0.4); } catch (e) {} }
+  const closed = [];
+  for (const id of cand) if (pressure || now - (IDLE.used[id] || now) > IDLE.LONG) { if (await closeIdle(id)) closed.push(id); }
+  return closed;
+}
+async function closeIdle(id) {
+  const f = ST.frames[id]; if (!f || id === ST.active) return false; IDLE.asking[id] = true; const qid = 'u' + id + Date.now();
+  const r = await new Promise(res => { const t = setTimeout(() => { delete UNLOADQ[qid]; res(null); }, 8000); UNLOADQ[qid] = d => { clearTimeout(t); res(d); }; try { f.contentWindow.postMessage({ rs: 'canUnload', qid }, '*'); } catch (e) { res(null); } });
+  delete IDLE.asking[id];
+  if (!r || !r.ok || id === ST.active || ST.frames[id] !== f) return false;
+  ST.unloaded[id] = { rec: r.rec || null, model: ST.sent[id] || ST.model[id] || null, at: Date.now() };
+  f.src = 'about:blank'; f.remove(); delete ST.frames[id]; ST.ready[id] = false; delete ST.sent[id];
+  $$('#main > .loading').forEach(x => { if (x.dataset.for === id) x.remove(); });
+  return true;
+}
+setInterval(() => idleSweep(), IDLE.EVERY);
 /* 7.3: the app you used last is loaded in the background (hidden, not drawing), so opening it is instant */
 function prewarm() {
   const lw = lsGet('rtk.lastWork'), m = MODULES.find(x => x.id === lw && x.status === 'ready');
