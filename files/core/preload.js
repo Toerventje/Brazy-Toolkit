@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('rsDesktop', {
   onUpdateProgress: (cb) => ipcRenderer.on('rs:updateProgress', (_e, info) => cb(info)),
   // 6.6: keep the PC awake during exports, projects opened from Windows, crash recovery, performance report
   keepAwake: (on) => ipcRenderer.invoke('rs:keepAwake', !!on),
+  // 8.11.2: colour from anywhere on screen -> '#rrggbb' or null
+  eyedrop: () => ipcRenderer.invoke('rs:eyedrop'),
   onOpenFile: (cb) => ipcRenderer.on('rs:openFile', (_e, f) => cb(f)),
   onCrashed: (cb) => ipcRenderer.on('rs:crashed', (_e, info) => cb(info)),
   metrics: () => ipcRenderer.invoke('rs:metrics'),

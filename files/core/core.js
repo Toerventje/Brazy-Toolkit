@@ -1,7 +1,7 @@
 // Brazy Toolkit desktop core (8.0): window, files from Windows, exports, backups, performance, updates.
 // Started by ../main.js (the loader). Can be updated online together with the toolkit: an update that changes these
 // files restarts the app once (see updater.js).
-const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, screen, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, screen, powerSaveBlocker, desktopCapturer } = require('electron');
 const path = require('path'), fs = require('fs');
 const S = require('./store'), U = require('./updater');
 
@@ -125,6 +125,7 @@ function ipc() {
   h('rs:downloadOnline', async () => { const st = await U.check(true); return st.phase === 'ready' ? U.install(loadToolkit) : { ok: st.phase !== 'error', msg: st.msg, state: st }; });   // 7.x name, kept for the hub
   // system
   h('rs:keepAwake', (_e, on) => keepAwake(!!on));
+  h('rs:eyedrop', () => eyedrop());   // 8.11.2: pick a colour anywhere on screen (other apps, browsers)
   h('rs:metrics', () => { const m = app.getAppMetrics(); return { mem: m.map(x => ({ type: x.type, mb: Math.round((x.memory && x.memory.workingSetSize || 0) / 1024) })), cpu: m.reduce((a, x) => a + (x.cpu ? x.cpu.percentCPUUsage : 0), 0) }; });
   // automatic backups of all projects into a folder the person picks (e.g. OneDrive); the newest `keep` files stay
   h('rs:backupDir', () => S.cfg.backupDir || '');
@@ -177,3 +178,44 @@ app.whenReady().then(() => {
   U.start(win);
 });
 app.on('window-all-closed', () => { keepAwake(false); app.quit(); });
+
+/* ---- 8.11.2: screen eyedropper. The toolkit steps aside (minimised), the screen under the mouse is photographed, and a
+   full-screen overlay with a magnifier lets you click any pixel — other apps, browsers, the desktop. Esc cancels.
+   Resolves with '#rrggbb' or null. ---- */
+let EYE_BUSY = false;
+const EYE_HTML = `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden;background:#000;cursor:crosshair}
+canvas{position:fixed;inset:0;width:100%;height:100%}#lp{position:fixed;width:132px;height:132px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 1px #000,0 8px 24px rgba(0,0,0,.6);overflow:hidden;pointer-events:none;image-rendering:pixelated}
+#lp canvas{position:absolute;inset:0;width:100%;height:100%}#tag{position:fixed;padding:4px 8px;border-radius:4px;background:#111;color:#fff;font:600 13px Consolas,monospace;pointer-events:none;display:flex;gap:6px;align-items:center}
+#tag i{width:14px;height:14px;border-radius:3px;border:1px solid #fff;display:inline-block}#hint{position:fixed;left:50%;top:18px;transform:translateX(-50%);background:rgba(17,17,17,.88);color:#fff;font:600 13px Segoe UI,sans-serif;padding:8px 14px;border-radius:6px;pointer-events:none}</style>
+<canvas id="cv"></canvas><div id="lp"><canvas id="zc" width="11" height="11"></canvas></div><div id="tag"><i></i><span></span></div><div id="hint">Klik om een kleur te nemen · Esc = annuleren &nbsp;|&nbsp; Click to take a colour · Esc = cancel</div>
+<script>
+const cv=document.getElementById('cv'),g=cv.getContext('2d',{willReadFrequently:true}),zc=document.getElementById('zc'),zg=zc.getContext('2d'),lp=document.getElementById('lp'),tag=document.getElementById('tag');let img=null;
+function setImg(u){const im=new Image();im.onload=()=>{img=im;cv.width=im.width;cv.height=im.height;g.drawImage(im,0,0);document.title='ready';};im.src=u;}
+const px=e=>[Math.min(cv.width-1,Math.max(0,Math.round(e.clientX/innerWidth*cv.width))),Math.min(cv.height-1,Math.max(0,Math.round(e.clientY/innerHeight*cv.height)))];
+const hex=(x,y)=>{const d=g.getImageData(x,y,1,1).data;return'#'+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,'0')).join('');};
+addEventListener('mousemove',e=>{if(!img)return;const[x,y]=px(e);zg.imageSmoothingEnabled=false;zg.clearRect(0,0,11,11);zg.drawImage(cv,x-5,y-5,11,11,0,0,11,11);zg.strokeStyle='#fff';zg.lineWidth=.12;zg.strokeRect(5,5,1,1);
+ lp.style.left=(e.clientX+18)+'px';lp.style.top=(e.clientY+18)+'px';const h=hex(x,y);tag.querySelector('i').style.background=h;tag.querySelector('span').textContent=h;tag.style.left=(e.clientX+28)+'px';tag.style.top=(e.clientY+156)+'px';});
+addEventListener('mousedown',e=>{if(!img)return;if(e.button!==0){document.title='cancel';return;}const[x,y]=px(e);document.title='pick:'+hex(x,y);});
+addEventListener('keydown',e=>{if(e.key==='Escape')document.title='cancel';});addEventListener('contextmenu',e=>e.preventDefault());
+</script>`;
+async function eyedrop() {
+  if (EYE_BUSY) return null; EYE_BUSY = true;
+  const wasMin = win && !win.isDestroyed() && win.isMinimized();
+  try {
+    const pt = screen.getCursorScreenPoint(), disp = screen.getDisplayNearestPoint(pt), sf = disp.scaleFactor || 1;
+    if (win && !win.isDestroyed() && !wasMin) { win.minimize(); await new Promise(r => setTimeout(r, 380)); }   // let what is behind the toolkit show
+    const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(disp.size.width * sf), height: Math.round(disp.size.height * sf) } });
+    const src = srcs.find(x => String(x.display_id) === String(disp.id)) || srcs[0]; if (!src || src.thumbnail.isEmpty()) return null;
+    const url = src.thumbnail.toDataURL(), b = disp.bounds;
+    return await new Promise(resolve => {
+      const ov = new BrowserWindow({ x: b.x, y: b.y, width: b.width, height: b.height, frame: false, alwaysOnTop: true, skipTaskbar: true, resizable: false, movable: false, fullscreenable: false, hasShadow: false, show: false, backgroundColor: '#000000', webPreferences: { contextIsolation: true, sandbox: true } });
+      let done = false; const finish = v => { if (done) return; done = true; try { ov.destroy(); } catch (e) { } resolve(v); };
+      ov.setAlwaysOnTop(true, 'screen-saver');
+      ov.webContents.on('page-title-updated', (_e, t) => { if (t === 'ready') { ov.setBounds(b); ov.show(); ov.focus(); } else if (t === 'cancel') finish(null); else if (/^pick:#[0-9a-f]{6}$/.test(t)) finish(t.slice(5)); });
+      ov.on('blur', () => setTimeout(() => { if (!done && !ov.isDestroyed() && !ov.isFocused()) finish(null); }, 250)); ov.on('closed', () => finish(null));
+      ov.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(EYE_HTML)).then(() => ov.webContents.executeJavaScript('setImg(' + JSON.stringify(url) + ')')).catch(() => finish(null));
+      setTimeout(() => finish(null), 120000);
+    });
+  } catch (e) { return null; }
+  finally { EYE_BUSY = false; if (win && !win.isDestroyed() && !wasMin) { win.restore(); win.focus(); } }
+}
