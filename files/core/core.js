@@ -128,6 +128,29 @@ function ipc() {
   h('rs:eyedrop', () => eyedrop());   // 8.11.2: pick a colour anywhere on screen (other apps, browsers)
   h('rs:metrics', () => { const m = app.getAppMetrics(); return { mem: m.map(x => ({ type: x.type, mb: Math.round((x.memory && x.memory.workingSetSize || 0) / 1024) })), cpu: m.reduce((a, x) => a + (x.cpu ? x.cpu.percentCPUUsage : 0), 0) }; });
   // automatic backups of all projects into a folder the person picks (e.g. OneDrive); the newest `keep` files stay
+  /* 8.15: your own clothes — one folder per item (a .glb 3D model + its base map images + item.json with name and category),
+     by default Documents\Brazy Toolkit\Custom. Only these files can be read or written, only inside that folder. */
+  const CU_OK = /\.(glb|png|webp|jpe?g)$/i, cuDir = () => { const d = S.cfg.customDir || path.join(app.getPath('documents'), 'Brazy Toolkit', 'Custom'); try { fs.mkdirSync(d, { recursive: true }); } catch {} return d; };
+  const cuSafe = n => String(n || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').replace(/^[ .]+|[ .]+$/g, '').slice(0, 80) || 'Item';
+  const cuIn = (folder, file) => { const base = cuDir(), p = path.resolve(base, path.basename(String(folder || '')), file ? path.basename(String(file)) : ''); if (!p.startsWith(path.resolve(base) + path.sep)) throw new Error('outside the Custom folder'); return p; };
+  h('rs:customDir', () => cuDir());
+  h('rs:chooseCustomDir', async () => { const d = await pickDir('Map voor eigen kleding / Folder for your own clothes', cuDir()); if (d) { S.cfg.customDir = d; S.save(); } return cuDir(); });
+  h('rs:openCustomDir', (_e, folder) => { const p = folder ? cuIn(folder) : cuDir(); shell.openPath(p); return true; });
+  h('rs:customList', () => { const base = cuDir(), out = [];
+    for (const e of fs.readdirSync(base, { withFileTypes: true })) { if (!e.isDirectory()) continue; const dir = path.join(base, e.name); let files = [];
+      try { files = fs.readdirSync(dir).filter(f => CU_OK.test(f)).map(f => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: Math.round(st.mtimeMs) }; }); } catch { continue; }
+      if (!files.length) continue; out.push({ folder: e.name, meta: S.readJSON(path.join(dir, 'item.json'), {}), files }); }
+    return out; });
+  h('rs:customRead', (_e, folder, file) => { if (!CU_OK.test(String(file))) throw new Error('not a model or image'); return fs.readFileSync(cuIn(folder, file)); });
+  h('rs:customSave', (_e, item) => {
+    const o = item || {}; let folder = o.folder ? path.basename(String(o.folder)) : cuSafe(o.name);
+    if (!o.folder) { let k = 2; while (fs.existsSync(path.join(cuDir(), folder))) folder = cuSafe(o.name) + ' (' + k++ + ')'; }
+    const dir = cuIn(folder); fs.mkdirSync(dir, { recursive: true });
+    for (const f of o.files || []) { const n = path.basename(String(f.name || '')); if (!CU_OK.test(n)) continue; fs.writeFileSync(path.join(dir, n), Buffer.from(f.data)); }
+    const meta = Object.assign(S.readJSON(path.join(dir, 'item.json'), {}), { name: String(o.name || folder).slice(0, 80), module: String(o.module || ''), variant: o.variant || null, updated: Date.now() });
+    fs.writeFileSync(path.join(dir, 'item.json'), JSON.stringify(meta, null, 1)); return { folder };
+  });
+  h('rs:customDelete', async (_e, folder) => { const p = cuIn(folder); try { await shell.trashItem(p); } catch { S.rm(p); } return true; });   // to the Recycle Bin
   h('rs:backupDir', () => S.cfg.backupDir || '');
   h('rs:chooseBackupDir', async () => { const d = await pickDir('Back-upmap / Backup folder', S.cfg.backupDir); if (d) { S.cfg.backupDir = d; S.save(); } return S.cfg.backupDir || ''; });
   h('rs:clearBackupDir', () => { delete S.cfg.backupDir; S.save(); return ''; });

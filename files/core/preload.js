@@ -38,4 +38,12 @@ contextBridge.exposeInMainWorld('rsDesktop', {
   backupWrite: (name, data, keep) => ipcRenderer.invoke('rs:backupWrite', name, data, keep),
   backupList: () => ipcRenderer.invoke('rs:backupList'),
   backupRead: (name) => ipcRenderer.invoke('rs:backupRead', name),
+  // 8.15: your own clothes (Custom folder)
+  customDir: () => ipcRenderer.invoke('rs:customDir'),
+  chooseCustomDir: () => ipcRenderer.invoke('rs:chooseCustomDir'),
+  openCustomDir: (folder) => ipcRenderer.invoke('rs:openCustomDir', folder || ''),
+  customList: () => ipcRenderer.invoke('rs:customList'),
+  customRead: (folder, file) => ipcRenderer.invoke('rs:customRead', folder, file),
+  customSave: (item) => ipcRenderer.invoke('rs:customSave', item),
+  customDelete: (folder) => ipcRenderer.invoke('rs:customDelete', folder),
 });
