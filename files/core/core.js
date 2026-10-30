@@ -19,8 +19,8 @@ let win = null, pendingOpen = null, awakeId = null;
 const send = (ch, data) => { if (win && !win.isDestroyed()) win.webContents.send(ch, data); };
 function loadToolkit() { win.loadFile(path.join(S.activeRoot().dir, 'reskate-toolkit.html')); }
 
-/* ---------------- files from Windows: projects (.bzvideo / .rslogo) and update files (.rsupd) ---------------- */
-const projFileArg = argv => (argv || []).find(a => /\.(bzvideo|rslogo)$/i.test(a) && fs.existsSync(a));
+/* ---------------- files from Windows: projects (.bzvideo / .rslogo / .rsgarment) and update files (.rsupd) ---------------- */
+const projFileArg = argv => (argv || []).find(a => /\.(bzvideo|rslogo|rsgarment)$/i.test(a) && fs.existsSync(a));
 const updFileArg = argv => (argv || []).find(a => /\.rsupd$/i.test(a) && fs.existsSync(a));
 function sendOpenFile(p) {
   try { const msg = { name: path.basename(p), data: fs.readFileSync(p) };
@@ -34,11 +34,11 @@ function installFile(file) {
     return U.install(loadToolkit);
   } catch (e) { if (win && !win.isDestroyed()) send('rs:updateResult', { ok: false, msg: e.message }); else dialog.showErrorBox('Brazy Toolkit', e.message); return { ok: false, msg: e.message }; }
 }
-/** per user, no admin needed: .bzvideo / .rslogo / .rsupd open with Brazy Toolkit */
+/** per user, no admin needed: .bzvideo / .rslogo / .rsgarment / .rsupd open with Brazy Toolkit */
 function registerFileTypes() {
-  if (process.platform !== 'win32' || !app.isPackaged) return; const exe = process.execPath, ver = exe + '|1'; if (S.cfg.assoc === ver) return;
+  if (process.platform !== 'win32' || !app.isPackaged) return; const exe = process.execPath, ver = exe + '|2'; if (S.cfg.assoc === ver) return;
   const { execFile } = require('child_process'), reg = args => new Promise(r => execFile('reg', args, { windowsHide: true }, () => r())), K = 'HKCU\\Software\\Classes\\';
-  const types = [['.bzvideo', 'BrazyToolkit.Video', 'Brazy Video Editor project'], ['.rslogo', 'BrazyToolkit.Logo', 'Brazy Logo Maker project'], ['.rsupd', 'BrazyToolkit.Update', 'Brazy Toolkit update']];
+  const types = [['.bzvideo', 'BrazyToolkit.Video', 'Brazy Video Editor project'], ['.rslogo', 'BrazyToolkit.Logo', 'Brazy Logo Maker project'], ['.rsgarment', 'BrazyToolkit.Clothing', 'Brazy Clothing Manager project'], ['.rsupd', 'BrazyToolkit.Update', 'Brazy Toolkit update']];
   (async () => { for (const [ext, id, desc] of types) { await reg(['add', K + ext, '/ve', '/d', id, '/f']); await reg(['add', K + id, '/ve', '/d', desc, '/f']); await reg(['add', K + id + '\\DefaultIcon', '/ve', '/d', `"${exe}",0`, '/f']); await reg(['add', K + id + '\\shell\\open\\command', '/ve', '/d', `"${exe}" "%1"`, '/f']); }
     S.cfg.assoc = ver; S.save(); })();
 }
@@ -68,7 +68,7 @@ function createWindow() {
   const fileOf = url => decodeURIComponent(new URL(url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
   win.webContents.on('will-navigate', (e, url) => {
     if (/^file:.*\.rsupd$/i.test(url)) { e.preventDefault(); try { installFile(fileOf(url)); } catch {} return; }
-    if (/^file:.*\.(bzvideo|rslogo)$/i.test(url)) { e.preventDefault(); try { sendOpenFile(fileOf(url)); } catch {} return; }
+    if (/^file:.*\.(bzvideo|rslogo|rsgarment)$/i.test(url)) { e.preventDefault(); try { sendOpenFile(fileOf(url)); } catch {} return; }
     if (!url.startsWith('file:')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url); }
   });
   // the page crashed (out of memory, graphics driver…): load it again and offer the autosaved work
