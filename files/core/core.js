@@ -180,6 +180,7 @@ app.whenReady().then(() => {
   // an installed online update that is not newer than the installation itself is left over from before a reinstall
   const ci = S.info(S.contentDir()); if (ci && S.vcmp(ci.version, app.getVersion()) <= 0) S.rm(S.contentDir());
   const nx = S.info(S.nextDir()); if (nx && (!nx.complete || S.vcmp(nx.version, S.activeRoot().version) <= 0)) S.rm(S.nextDir());
+  if (require('./updater').applyStagedAtStart() === 'restart') { app.relaunch(); app.exit(0); return; }   // 8.16: a downloaded update goes in at start-up
   // exports: straight into the chosen export folder (no prompt), otherwise a normal "Save as" dialog
   session.defaultSession.on('will-download', (_e, item) => {
     const name = item.getFilename();

@@ -92,6 +92,18 @@ U.install = function (reload) {
   reload(); U.setState({ phase: 'idle', version: ci.version }); return { ok: true, version: ci.version };
 };
 
+/** 8.16: at start-up, an update that was downloaded but never installed ("install now" ignored) goes in by itself, before the
+    window opens — so nobody keeps running an old version. Returns 'restart' when the app core changed too. */
+U.applyStagedAtStart = function () {
+  try {
+    const nx = S.nextDir(), ci = S.info(nx); if (!ci || !ci.complete || S.vcmp(ci.version, S.activeRoot().version) <= 0 || ci.installer) return '';
+    const cd = S.contentDir(), old = cd + '.old'; S.rm(old);
+    if (fs.existsSync(cd)) fs.renameSync(cd, old);
+    fs.renameSync(nx, cd); S.rm(old);
+    S.cfg.justUpdated = ci.version; S.save();
+    return ci.restart ? 'restart' : 'ok';
+  } catch (e) { return ''; }
+};
 U.start = function (win) {
   U.win = win; clearInterval(U.timer);
   setTimeout(() => U.check(), 4000);
